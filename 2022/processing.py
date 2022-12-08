@@ -420,18 +420,60 @@ class Solution07(AoC2022):
         # print(f'\nSolution for part B is:')
         # print(s2)
 
-def get_costs(bom, costs):
-    part_costs = dict()
 
-    for index, row in bom.iterrows():
-        # Iterate over the parts in the row and add their costs to the total
-        for part in row:
-            # If the part has not been processed yet, recursively call the function to calculate its cost
-            if part not in part_costs:
-                part_costs[part] = get_costs(bom[bom[part].isin(costs.keys())], costs, part_costs)
-            # Add the cost of the part to the dictionary of part costs
-            part_costs[part] += costs[part]
-    return part_costs
+class DependencyTree:
+    def __init__(self, mapping: pd.DataFrame, values: dict):
+        self._validation_and_transform(mapping, values)
+        self.total_values = dict()
+
+    def _validation_and_transform(self, mapping, values):
+        # Validate mapping
+        assert mapping.shape[1] == 2, 'mapping should be a DataFrame with two columns'
+        self.mapping = mapping
+        self.mapping.columns = ['from', 'to']
+        self.from_uniq = set(self.mapping['from'])
+        self.to_uniq = set(self.mapping['to'])
+        self.mapping_uniq = self.from_uniq | self.to_uniq
+        for part in self.from_uniq:
+            assert part in values.keys(), f'`{part}` from the "from" mapping is not found in the values dictionary'
+        for part in self.to_uniq:
+            assert part in values.keys(), f'`{part}` from the "to" mapping is not found in the values dictionary'
+
+        # Validate values
+        for part in values.keys():
+            assert part in self.mapping_uniq, f'`{part}` from the values dictionary is not found in the mapping'
+        assert np.alltrue([isinstance(i, (int, float)) for i in values.values()]), 'Not all values are numeric'
+        self.values = values
+
+    def __call__(self, parent):
+        pass
+
+
+def get_costs2(bom, costs, parent, part_costs=None):
+    # When initializing the first time
+    if part_costs is None:
+        part_costs = dict()
+
+    subset = bom[bom['from'] == parent]
+    if len(subset) > 0:
+        for row in subset.itertuples():
+            part_costs[row.to] = part_costs.get(row.to, 0) + get_costs2(bom, costs, row.to, part_costs)
+    else:
+        return costs[parent]
+
+        #     # Iterate over the parts in the row and add their costs to the total
+        #     to_part = row.to
+        #
+        #     # If the part has not been processed yet, recursively call the function to calculate its cost
+        #     if to_part not in part_costs:
+        #         part_costs[to_part] = get_costs(bom, costs, to_part, part_costs)
+        #
+        #     # Add the cost of the part to its parent
+        #     part_costs[parent] = part_costs.get(parent, 0) + costs[to_part]
+        #
+        # return part_costs
+    # else:
+    #     return costs[parent]
 
 
 def aggregate_values(mapping: pd.DataFrame, values: dict):
@@ -448,7 +490,8 @@ def aggregate_values(mapping: pd.DataFrame, values: dict):
     for part in values.keys():
         assert part in mapping_uniq, f'`{part}` from the values dictionary is not found in the mapping'
 
-    total_per_element = {k: values[k] for k in from_uniq}
+    df_values = pd.DataFrame({'part': values.keys(), 'value': values.values()})
+    total_per_element = {k: 0 for k in to_uniq} | {k: values[k] for k in from_uniq}  # starting point
 
     def aggregate_recursively(sub_mapping: pd.DataFrame, values: dict):
         for row in sub_mapping.itertuples():
@@ -461,8 +504,16 @@ def aggregate_values(mapping: pd.DataFrame, values: dict):
                 total_per_element[part] += values[part]
         return total_per_element
 
-    for part in from_uniq:
-        pass
+    for part in to_uniq:  # loop over "to" sublevel
+        subset = mapping.loc[mapping['from'] == part]  # check whether that level has sublevels of its own
+        if len(subset) > 0:
+            level_sum = pd.merge(
+                subset, df_values, left_on='from', right_on='part', how='left'
+            )['value'].sum()
+
+
+        total_per_element[part] += level_sum
+
 
 
 if __name__ == '__main__':
@@ -474,22 +525,24 @@ if __name__ == '__main__':
 
     # Example BOM DataFrame
     bom = pd.DataFrame([
-        ["part1", "part2"],
-        ["part1", "part3"],
-        ["part2", "part4"],
-        ["part3", "part4"],
-    ], columns=['a', 'b'])
+        ['A', 'B'],
+        ['A', 'C'],
+        ['B', 'D'],
+        ['C', 'D'],
+        ['C', 'F'],
+        ['D', 'E']
+    ], columns=['from', 'to'])
 
     # Dictionary containing the costs of the individual parts
-    costs = {
-        "part1": 10,
-        "part2": 15,
-        "part3": 20,
-        "part4": 25,
-    }
-    # costs = pd.DataFrame({'a': costs.keys(), 'b': costs.values()})
+    costs = {'A': 10, 'B': 15, 'C': 20, 'D': 25, 'E': 30, 'F': 35}
+
+    # The desired result when summing the dependent parts' values of the BOM
+    result = {'A': 190, 'B': 70, 'C': 110, 'D': 55, 'E': 30, 'F': 35}
 
     # Calculate the total cost of each part in the BOM
-    part_costs = aggregate_values(bom, costs)
+    # part_costs = aggregate_values(bom, costs)
+    # part_costs = get_costs(bom, costs, "A")
+    # print(part_costs)  # Output: {'part1': 45, 'part2': 15, 'part3': 45, 'part4': 25}
 
-    print(part_costs)  # Output: {'part1': 45, 'part2': 15, 'part3': 45, 'part4': 25}
+    bom = DependencyTree(bom, costs)
+
